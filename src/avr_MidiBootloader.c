@@ -3,8 +3,22 @@
  *  \brief      AVR bootloader with MIDI for firmware update through SysEx.
  *  \author     Francois Best
  *  \date       19/08/2009
+ *  \revision   13/10/2012
  *  \version    1.1.0
- *  Copyright   Forty Seven Effects 2012
+ *  \license    CC-BY-SA Forty Seven Effects - 2012
+ *
+ * THE WORK (AS DEFINED BELOW) IS PROVIDED UNDER THE TERMS 
+ * OF THIS CREATIVE COMMONS PUBLIC LICENSE ("CCPL" OR "LICENSE").
+ * THE WORK IS PROTECTED BY COPYRIGHT AND/OR OTHER APPLICABLE LAW. 
+ * ANY USE OF THE WORK OTHER THAN AS AUTHORIZED UNDER THIS LICENSE 
+ * OR COPYRIGHT LAW IS PROHIBITED.
+ * 
+ * BY EXERCISING ANY RIGHTS TO THE WORK PROVIDED HERE, YOU ACCEPT 
+ * AND AGREE TO BE BOUND BY THE TERMS OF THIS LICENSE. 
+ * TO THE EXTENT THIS LICENSE MAY BE CONSIDERED TO BE A CONTRACT, 
+ * THE LICENSOR GRANTS YOU THE RIGHTS CONTAINED HERE IN CONSIDERATION 
+ * OF YOUR ACCEPTANCE OF SUCH TERMS AND CONDITIONS.
+ * http://creativecommons.org/licenses/by-sa/3.0/
  */
 
 #include <inttypes.h>
@@ -56,25 +70,24 @@
 // Macros
 
 // UART Initialisation macro
-#define BEGIN_SERIAL(uart_, baud) \
-{ \
-    UBRR##uart_##H = ((F_CPU / 16 + baud / 2) / baud - 1) >> 8; \
-    UBRR##uart_##L = ((F_CPU / 16 + baud / 2) / baud - 1); \
-\
-/* reset config for UART */ \
-    UCSR##uart_##A = 0; \
-    UCSR##uart_##B = 0; \
-    UCSR##uart_##C = 0; \
-\
-/* enable rx and tx */ \
-    sbi(UCSR##uart_##B, RXEN##uart_);\
-    sbi(UCSR##uart_##B, TXEN##uart_);\
-\
-/* enable interrupt on complete reception of a byte */ \
-/*sbi(UCSR##uart_##B, RXCIE##uart_);*/ \
-    UCSR##uart_##C = _BV(UCSZ##uart_##1)|_BV(UCSZ##uart_##0); \
-/* defaults to 8-bit, no parity, 1 stop bit */ \
+#define BEGIN_SERIAL(uart_, baud)                                               \
+{                                                                               \
+    UBRR##uart_##H = ((F_CPU / 16 + baud / 2) / baud - 1) >> 8;                 \
+    UBRR##uart_##L = ((F_CPU / 16 + baud / 2) / baud - 1);                      \
+/* reset config for UART */                                                     \
+    UCSR##uart_##A = 0;                                                         \
+    UCSR##uart_##B = 0;                                                         \
+    UCSR##uart_##C = 0;                                                         \
+/* enable rx and tx */                                                          \
+    sbi(UCSR##uart_##B, RXEN##uart_);                                           \
+    sbi(UCSR##uart_##B, TXEN##uart_);                                           \
+/* enable interrupt on complete reception of a byte */                          \
+/*sbi(UCSR##uart_##B, RXCIE##uart_);*/                                          \
+    UCSR##uart_##C = _BV(UCSZ##uart_##1)|_BV(UCSZ##uart_##0);                   \
+/* defaults to 8-bit, no parity, 1 stop bit */                                  \
 }
+
+#define max(a, b) (a > b) ? a : b
 
 
 // -----------------------------------------------------------------------------
@@ -85,7 +98,7 @@ typedef uint16_t word;
 
 typedef struct Chunk_t
 {
-    byte        CurrentChunkID;
+    byte        id;
     uint16_t    address;                // Address of the first instruction
     uint16_t    count;                  // Number of bytes in the chunk
     byte        data[PAGE_SIZE_BYTES];
@@ -112,7 +125,7 @@ typedef struct FirmwareInfo_t
 // Functions Prototypes
 
 int main(void);
-byte SysExDecoder(byte *inSysEx, byte *outData, const byte inLength);
+byte decodeSysEx(byte* inSysEx, byte* outData, byte inLength);
 byte GetByteOnUSART0(void);
 byte GetByteOnUSART1(void);
 void SendByteOnUSART0(byte);
@@ -120,13 +133,13 @@ void SendByteOnUSART1(byte);
 void SendACK(byte);
 void SendNAK(byte);
 void SendDeviceInquiryReply(void);
-void ParseSysEx(byte *,word);
-void ParseGenericMessage(byte *,word);
-void ParseUniversalMessage(byte *,word);
-void HandleDeviceInquiry(byte *,word);
-void HandleHeader(byte *,word);
-void HandleDataPacket(byte *,word);
-void HandleEOF(byte *,word);
+void ParseSysEx(byte*, word);
+void ParseGenericMessage(byte*, word);
+void ParseUniversalMessage(byte*, word);
+void handleDeviceInquiry(byte*, word);
+void handleHeader(byte*, word);
+void handleDataPacket(byte*, word);
+void handleEOF(byte*, word);
 
 #if ENABLE_WRITE
 void WriteChunk();
@@ -135,13 +148,13 @@ void WriteChunk();
 void Reboot(void);
 
 #if ENABLE_LCD
-void LCDPrint(byte,byte,char*);
+void LCDPrint(byte, byte, char*);
 void LCDClear();
-void Cursor(byte,byte);
+void Cursor(byte, byte);
 #endif
 
 #if ENABLE_DEBUG
-void Debug(char *);
+void Debug(char*);
 void DebugData(byte);
 void CoreDump();
 #endif
@@ -177,7 +190,7 @@ void Reboot(void)
 {
     cli();
     wdt_enable(WDTO_15MS);
-    while(1);
+    while (1);
 }
 
 
@@ -186,64 +199,66 @@ void Reboot(void)
 
 #if ENABLE_DEBUG
 
-void Debug(char * text)
+void Debug(char* text)
 {
-    
     word length = strlen(text);
     word i;
-    for (i=0;i<length;i++) SendByteOnUSART0((byte)text[i]);
-    
+    for (i = 0; i < length; ++i)
+    {
+        SendByteOnUSART0((byte)text[i]);
+    }
     //    SendByteOnUSART0('\n');
 }
 
 
 void DebugData(byte data)
 {
-
     char text[4] = {0};
     byte msb = data >> 4;
     byte lsb = data & 0x0F;
-    text[0] = msb+((msb<10)?'0':('A'-10));
-    text[1] = lsb+((lsb<10)?'0':('A'-10));
+    text[0] = msb + ((msb < 10) ? '0' : ('A' - 10));
+    text[1] = lsb + ((lsb < 10) ? '0' : ('A' - 10));
     text[2] = ' ';
     Debug(text);
-    
 }
 
 
 void CoreDump()
 {
-    
-    word page,ligne,oct;
+    word page, ligne, oct;
     // Dump de la flash
-    for (page=0;page<256;page++) {
-        for (ligne=0;ligne<16;ligne++) {
+    for (page = 0; page < 256; ++page)
+    {
+        for (ligne = 0; ligne < 16; ++ligne)
+        {
             // écrire ici l'adresse hexa
             Debug("0x");
-            DebugData((page*256+ligne*16)>>8);
-            DebugData((page*256+ligne*16)&0xFF);
+            DebugData((page * 256 + ligne * 16) >> 8);
+            DebugData((page * 256 + ligne * 16) & 0xFF);
             Debug(":  ");
-            for (oct=0;oct<16;oct++) {
+            for (oct = 0; oct < 16; ++oct)
+            {
                 // Ecrire ici les données
-                DebugData(pgm_read_byte_near(page*256+ligne*16+oct));
+                DebugData(pgm_read_byte_near(page * 256 + ligne * 16 + oct));
             }
             Debug("\n");
         }
     }
     
     Debug("EEPROM\n");
-    for (ligne=0;ligne<4;ligne++) {
+    for (ligne = 0; ligne < 4; ++ligne)
+    {
         // écrire ici l'adresse hexa
         Debug("0x");
-        DebugData((ligne*16)>>8);
-        DebugData((ligne*16)&0xFF);
+        DebugData((ligne * 16) >> 8);
+        DebugData((ligne * 16) & 0xFF);
         Debug(":  ");
-        for (oct=0;oct<16;oct++) {
-            DebugData(EEPROM_read(ligne*16+oct));
+        for (oct = 0; oct < 16; ++oct)
+        {
+            DebugData(EEPROM_read(ligne * 16 + oct));
         }
         Debug("\n");
     }
-
 }
 
 #endif
@@ -257,29 +272,29 @@ void CoreDump()
 void InitEEPROM()
 {
     EEPROM_write(EEPROM_FLAG,'U');
-    EEPROM_write(EEPROM_FIRMWARE_INFOS,0x00); // Device Mobius
-    EEPROM_write(EEPROM_FIRMWARE_INFOS+1,0x01); // 1er
-    EEPROM_write(EEPROM_FIRMWARE_INFOS+2,0x01); // Janvier
-    EEPROM_write(EEPROM_FIRMWARE_INFOS+3,0x00); // 2000
-    EEPROM_write(EEPROM_FIRMWARE_INFOS+4,0x00); // Minuit 
-    EEPROM_write(EEPROM_FIRMWARE_INFOS+5,0x00); // pile
-    EEPROM_write(EEPROM_FIRMWARE_INFOS+6,0x00); // binsize 
-    EEPROM_write(EEPROM_FIRMWARE_INFOS+7,0x00); // binsize
-    EEPROM_write(EEPROM_FIRMWARE_INFOS+8,0x00); // checksum
+    EEPROM_write(EEPROM_FIRMWARE_INFOS,    0x00); // Device Mobius
+    EEPROM_write(EEPROM_FIRMWARE_INFOS + 1,0x01); // 1er
+    EEPROM_write(EEPROM_FIRMWARE_INFOS + 2,0x01); // Janvier
+    EEPROM_write(EEPROM_FIRMWARE_INFOS + 3,0x00); // 2000
+    EEPROM_write(EEPROM_FIRMWARE_INFOS + 4,0x00); // Minuit 
+    EEPROM_write(EEPROM_FIRMWARE_INFOS + 5,0x00); // pile
+    EEPROM_write(EEPROM_FIRMWARE_INFOS + 6,0x00); // binsize 
+    EEPROM_write(EEPROM_FIRMWARE_INFOS + 7,0x00); // binsize
+    EEPROM_write(EEPROM_FIRMWARE_INFOS + 8,0x00); // checksum
 }
 
 
 byte EEPROM_read(int address)
 {
     eeprom_busy_wait();
-    return eeprom_read_byte((unsigned char *) address);
+    return eeprom_read_byte((unsigned char*) address);
 }
 
 
 void EEPROM_write(int address, byte value)
 {
     eeprom_busy_wait();
-    eeprom_write_byte((unsigned char *) address, value);
+    eeprom_write_byte((unsigned char*) address, value);
 }
 
 #endif
@@ -288,23 +303,23 @@ void EEPROM_write(int address, byte value)
 // -----------------------------------------------------------------------------
 // Communications
 
-byte SysExDecoder(byte *inSysEx, byte *outData, const byte inLength)
+byte decodeSysEx(byte* inSysEx, byte* outData, byte inLength)
 {
-    
     byte cnt;
     byte cnt2 = 0;
     byte bits = 0;
     
-    for (cnt = 0; cnt < inLength; ++cnt) {
-        
-        if ((cnt % 8) == 0) {
+    for (cnt = 0; cnt < inLength; ++cnt)
+    {
+        if ((cnt % 8) == 0)
+        {
             bits = inSysEx[cnt];
         } 
-        else {
+        else
+        {
             outData[cnt2++] = inSysEx[cnt] | ((bits & 1) << 7);
             bits >>= 1;
         }
-        
     }
     return cnt2;
 }
@@ -314,7 +329,8 @@ byte GetByteOnUSART0(void)
 {
     // uint32_t count = 0;
     
-    while(!(UCSR0A & _BV(RXC0))) {
+    while(!(UCSR0A & _BV(RXC0))) 
+    {
         //    count++;
         //    if (count > MAX_TIME_COUNT) jumpToMainProgram();
     }
@@ -326,7 +342,8 @@ byte GetByteOnUSART1(void)
 {
     //uint32_t count = 0;
     
-    while(!(UCSR1A & _BV(RXC1))) {
+    while(!(UCSR1A & _BV(RXC1)))
+    {
         //count++;
         //if (count > MAX_TIME_COUNT) jumpToMainProgram();
     }
@@ -350,39 +367,38 @@ void SendByteOnUSART1(byte data)
 
 void SendACK(byte inPacketNumber)
 {
-    byte data[6] = {0xF0,0x7E,0x7F,0x7F,inPacketNumber,0xF7};
+    byte data[6] = { 0xF0, 0x7E, 0x7F, 0x7F, inPacketNumber, 0xF7 };
     word i;
     
 #if (UART_MIDI == 1)
-    for (i=0;i<6;i++) SendByteOnUSART1(data[i]);
+    for (i = 0; i < 6; ++i) SendByteOnUSART1(data[i]);
 #else 
-    for (i=0;i<6;i++) SendByteOnUSART0(data[i]);
+    for (i = 0; i < 6; ++i) SendByteOnUSART0(data[i]);
 #endif
-    
 }
 
 
 void SendNAK(byte inPacketNumber)
 {
-    
-    byte data[6] = {0xF0,0x7E,0x7F,0x7E,inPacketNumber,0xF7};
+    byte data[6] = { 0xF0, 0x7E, 0x7F, 0x7E, inPacketNumber, 0xF7 };
     word i;
     
 #if (UART_MIDI == 1)
-    for (i=0;i<6;i++) SendByteOnUSART1(data[i]);
+    for (i = 0; i < 6; ++i) SendByteOnUSART1(data[i]);
 #else 
-    for (i=0;i<6;i++) SendByteOnUSART0(data[i]);
+    for (i = 0; i < 6; ++i) SendByteOnUSART0(data[i]);
 #endif
     
 }
 
 
 // -----------------------------------------------------------------------------
-// Parsers & Handlers
+// Parsers & handlers
 
-void ParseSysEx(byte * data,word length)
+void ParseSysEx(byte* data,word length)
 {
-    switch (data[1]) {
+    switch (data[1])
+    {
         case 0x7E: // Universal
             ParseUniversalMessage(data,length);
             return;
@@ -397,18 +413,17 @@ void ParseSysEx(byte * data,word length)
 }
 
 
-void ParseGenericMessage(byte * data,word length)
+void ParseGenericMessage(byte* inData, word inLength)
 {
+    byte rebootRequest[7]  = { 0xF0, 0x00, 0x2F, 0x2F, 0x05, 'r', 0xF7 };
+    byte upgradeRequest[7] = { 0xF0, 0x00, 0x2F, 0x2F, 0x05, 'u', 0xF7 };
     
-    byte RebootRequest[7]  = {0xF0,0x00,0x2F,0x2F,0x05,'r',0xF7};
-    byte UpgradeRequest[7] = {0xF0,0x00,0x2F,0x2F,0x05,'u',0xF7};
-    
-    if (!memcmp(RebootRequest,data,(length>7)?7:length)) {
-        
+    if (!memcmp(rebootRequest, inData, max(inLength, 7))
+    {
         Reboot();
-        
     }
-    else if (!memcmp(UpgradeRequest,data,(length>7)?7:length)) {
+    else if (!memcmp(upgradeRequest, inData, max(inLength, 7))
+    {
         
 #if ENABLE_EE_DATA
         
@@ -426,17 +441,19 @@ void ParseGenericMessage(byte * data,word length)
 }
 
 
-void ParseUniversalMessage(byte * data, word length)
+void ParseUniversalMessage(byte* data, word length)
 {
-    switch (data[5]) {
+    switch (data[5])
+    {
         case 0x07: // File Dump
-            switch (data[6]) {
+            switch (data[6])
+            {
                 case 0x01: // Header (donne le départ du transfert)
-                    HandleHeader(data,length);
+                    handleHeader(data, length);
                     return;
                     break;
                 case 0x02: // Data Packet
-                    HandleDataPacket(data,length);
+                    handleDataPacket(data, length);
                     return;
                     break;
                 default: 
@@ -445,58 +462,73 @@ void ParseUniversalMessage(byte * data, word length)
             }
             break;
         case 0x7B: // EOF
-            HandleEOF(data,length);
+            handleEOF(data,length);
             return;
             break;
         case 0x06:
-            HandleDeviceInquiry(data,length);
+            handleDeviceInquiry(data,length);
             break;
         default: 
             return;
             break;    
     }
-    
 }
 
 
-void HandleDeviceInquiry(byte * data,word length)
+void handleDeviceInquiry(byte* data,word length)
 {
-    
-    if (data[6] == 0x01) {
-        
+    if (data[6] == 0x01)
+    {   
         // DeviceInquiry, prepare answer
-        byte reply[17] = {0xF0,0x7E,0x7F,0x06,0x02,0x00,0x2F,0x2F,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xF7};
+        byte reply[17] = {
+            0xF0,   // Start SysEX
+            0x7E,   // Universal Non Real Time
+            0x7F,   // All Devices (broadcast)
+            0x06,   // Device Identity reply
+            0x02,   // Device Identity reply
+            0x00,   // 3 bytes for Vendor Id
+            0x2F,   // Forty Seven Effects
+            0x2F,   // Forty Seven Effects
+            0x00,   // 
+            0x00,   // 
+            0x00,   // 
+            0x00,   // 
+            0x00,   // 
+            0x00,   // 
+            0x00,   // 
+            0x00,   // 
+            0xF7    // End of Exclusive
+        };
         byte i;
         
 #if ENABLE_EE_DATA
-        
         // Load the EEPROM data
-        for (i=0;i<6;i++) reply[8+i] = EEPROM_read(EEPROM_FIRMWARE_INFOS+i);
-        
+        for (i = 0; i < 6; ++i)
+        {
+            reply[8 + i] = EEPROM_read(EEPROM_FIRMWARE_INFOS + i);
+        }
 #endif
         
         reply[14] = 0x01; // Chunk size: 260 (2 address + 2 count + 256 data)
         reply[15] = 0x04;
         
 #if (UART_MIDI == 1)
-        for (i=0;i<17;i++) SendByteOnUSART1(reply[i]);
+        for (i = 0; i < 17; ++i) SendByteOnUSART1(reply[i]);
 #else
-        for (i=0;i<17;i++) SendByteOnUSART0(reply[i]);    
+        for (i = 0; i < 17; ++i) SendByteOnUSART0(reply[i]);    
 #endif
-        
     }
-    
 }
 
 
-void HandleHeader(byte * data,word length)
+void handleHeader(byte* data,word length)
 {
     
     if (!memcmp(&data[8],"MFU ",4))
     {
         // Décodage des infos
         byte decoded[12] = {0};
-        SysExDecoder(&data[12],decoded,14);
+        decodeSysEx(&data[12],decoded,14);
         gFirmware.device = decoded[0];
         gFirmware.day = decoded[1];
         gFirmware.month = decoded[2];
@@ -508,7 +540,7 @@ void HandleHeader(byte * data,word length)
         gFirmware.sizeofsubchunk = decoded[8];
         gFirmware.size = ((uint16_t)decoded[9]<<8)|(decoded[10]);
         gFirmware.checksum = decoded[11];
-        gChunk.CurrentChunkID = -1; // So that the first one is set to 0
+        gChunk.id = -1; // So that the first one is set to 0
         
 #if ENABLE_LCD
         LCDClear();
@@ -525,7 +557,7 @@ void HandleHeader(byte * data,word length)
 }
 
 
-void HandleDataPacket(byte * data,word length)
+void handleDataPacket(byte* data,word length)
 {
     
     word i;
@@ -542,14 +574,14 @@ void HandleDataPacket(byte * data,word length)
     
     // Décodage
     byte decoded[68] = {0xFF};
-    SysExDecoder(&data[9],decoded,data[8]+1);
+    decodeSysEx(&data[9],decoded,data[8]+1);
     
     if (subchunkIndex == 0) { // Premier paquet du chunk -> reset du Chunk
         gChunk.address = (decoded[0]<<8) | (decoded[1]);        // init de l'adresse
         gChunk.count = ((decoded[2]<<8) | (decoded[3]));        // init du compteur
         for (i=0;i<PAGE_SIZE_BYTES;i++) gChunk.data[i] = 0;    // init des data
         for (i=0;i<gChunk.count;i++) gChunk.data[i] = decoded[i+4];
-        gChunk.CurrentChunkID++;        
+        gChunk.id++;        
     }
     else {
         word count = ((decoded[2]<<8) | (decoded[3]));        // decoded data byte count
@@ -568,10 +600,10 @@ void HandleDataPacket(byte * data,word length)
 
 
 // Y'a encore du taf sur celle là
-void HandleEOF(byte * data,word length)
+void handleEOF(byte* data,word length)
 { 
     
-    if (gChunk.CurrentChunkID+1 == gFirmware.numberofchunks) {
+    if (gChunk.id+1 == gFirmware.numberofchunks) {
         
 #if ENABLE_EE_DATA
         
@@ -656,7 +688,7 @@ void WriteChunk()
     
 #if ENABLE_LCD    
     char whitesquare[2] = {42,0};
-    LCDPrint(1,(gChunk.CurrentChunkID*16)/gFirmware.numberofchunks,whitesquare);
+    LCDPrint(1,(gChunk.id*16)/gFirmware.numberofchunks,whitesquare);
 #endif
     
 }
@@ -668,7 +700,7 @@ void WriteChunk()
 
 #if ENABLE_LCD
 
-void LCDPrint(byte line,byte col,char* text)
+void LCDPrint(byte line, byte col, char* text)
 {
 
     Cursor(line,col);
@@ -687,7 +719,7 @@ void LCDClear()
 }
 
 
-void Cursor(byte line,byte col)
+void Cursor(byte line, byte col)
 {
 
     line %= 2;      
