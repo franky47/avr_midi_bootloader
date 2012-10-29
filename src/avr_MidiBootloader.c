@@ -305,7 +305,7 @@ enum // EEPROM Addresses
     kEEAddr_Year            = EEADDR_FIRMWARE_INFO + kFirmInfo_Year,
     kEEAddr_Hour            = EEADDR_FIRMWARE_INFO + kFirmInfo_Hour,
     kEEAddr_Minute          = EEADDR_FIRMWARE_INFO + kFirmInfo_Minute,
-    kEEAddr_BinSizeMSB      = EEADDR_FIRMWARE_INFO + k FirmInfo_BinSizeMSB,
+    kEEAddr_BinSizeMSB      = EEADDR_FIRMWARE_INFO + kFirmInfo_BinSizeMSB,
     kEEAddr_BinSizeLSB      = EEADDR_FIRMWARE_INFO + kFirmInfo_BinSizeLSB,
     kEEAddr_Checksum        = EEADDR_FIRMWARE_INFO + kFirmInfo_Checksum,
 };
