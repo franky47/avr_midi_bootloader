@@ -42,17 +42,18 @@
 
 #define DEBUG_LINE_ACTIVATED ((ENABLE_DEBUG) && !(ENABLE_LCD))
 
-
 // -----------------------------------------------------------------------------
 // Configuration & Settings
 
 #if defined(__AVR_ATmega644P__)
-#   define PAGE_SIZE            0x080U   // 128 words
-#   define PAGE_SIZE_BYTES      0x100U   // 256 bytes
+#   define PAGE_SIZE            0x080U  // 128 words
+#elif defined(__AVR_ATmega328P__)
+#   define PAGE_SIZE            0x040U  // 64 words
 #else
 #   error Implement page size for the target device.
 #endif
 
+#define PAGE_SIZE_BYTES         2 * PAGE_SIZE
 #define INPUT_BUFFER_SIZE       256
 
 #define UART_MIDI               1
@@ -77,7 +78,6 @@
 #   error Device codes must be lower than 128 (MSBit must be zero).
 #endif
 
-
 // -----------------------------------------------------------------------------
 // Macros
 
@@ -100,7 +100,6 @@
 }
 
 #define max(a, b) (a > b) ? a : b
-
 
 // -----------------------------------------------------------------------------
 // Type Definitions
@@ -131,7 +130,6 @@ typedef struct FirmwareInfo_t
     word        size;                   // Firmware total size
     byte        checksum;
 } FirmwareInfo;
-
 
 // -----------------------------------------------------------------------------
 // Functions Prototypes
@@ -175,13 +173,11 @@ void initEEPROM();
 byte EEPROM_read(int);
 void EEPROM_write(int, byte);
 
-
 // -----------------------------------------------------------------------------
 // Globals
 
 FirmwareInfo gFirmware;
 Chunk gChunk;
-
 
 // -----------------------------------------------------------------------------
 // Program Jumps
@@ -205,7 +201,6 @@ void reboot(void)
     while (1);
 }
 
-
 // -----------------------------------------------------------------------------
 // Debug
 
@@ -222,7 +217,6 @@ void debug(char* text)
     //    sendByteOnUSART0('\n');
 }
 
-
 void debugData(byte data)
 {
     char text[4] = {0};
@@ -233,7 +227,6 @@ void debugData(byte data)
     text[2] = ' ';
     debug(text);
 }
-
 
 void CoreDump()
 {
@@ -274,7 +267,6 @@ void CoreDump()
 }
 
 #endif
-
 
 // -----------------------------------------------------------------------------
 // EEPROM
@@ -333,13 +325,11 @@ void initEEPROM()
     EEPROM_write(kEEAddr_Checksum,      0x00);
 }
 
-
 byte EEPROM_read(int address)
 {
     eeprom_busy_wait();
     return eeprom_read_byte((unsigned char*) address);
 }
-
 
 void EEPROM_write(int address, byte value)
 {
@@ -373,7 +363,6 @@ byte decodeSysEx(byte* inSysEx, byte* outData, byte inLength)
     }
     return cnt2;
 }
-
 
 typedef struct
 {
@@ -416,7 +405,6 @@ byte decodeSysExByte(byte inData)
     }
 }
 
-
 byte getByteOnUSART0(void)
 {
     // uint32_t count = 0;
@@ -428,7 +416,6 @@ byte getByteOnUSART0(void)
     }
     return UDR0;
 }
-
 
 byte getByteOnUSART1(void)
 {
@@ -442,20 +429,17 @@ byte getByteOnUSART1(void)
     return UDR1;
 }
 
-
 void sendByteOnUSART0(byte data)
 {
     while (!(UCSR0A & _BV(UDRE0)));
     UDR0 = data;
 }
 
-
 void sendByteOnUSART1(byte data)
 {
     while (!(UCSR1A & _BV(UDRE1)));
     UDR1 = data;
 }
-
 
 void sendACK(byte inPacketNumber)
 {
@@ -469,7 +453,6 @@ void sendACK(byte inPacketNumber)
 #endif
 }
 
-
 void sendNAK(byte inPacketNumber)
 {
     byte data[6] = { 0xF0, 0x7E, 0x7F, 0x7E, inPacketNumber, 0xF7 };
@@ -482,7 +465,6 @@ void sendNAK(byte inPacketNumber)
 #endif
     
 }
-
 
 // -----------------------------------------------------------------------------
 // Parsers & handlers
@@ -503,7 +485,6 @@ void parseSysEx(byte* data, word length)
             break;
     }
 }
-
 
 void parseGenericMessage(byte* inData, word inLength)
 {
@@ -533,7 +514,6 @@ void parseGenericMessage(byte* inData, word inLength)
     
 }
 
-
 void parseUniversalMessage(byte* data, word length)
 {
     switch (data[5])
@@ -561,7 +541,6 @@ void parseUniversalMessage(byte* data, word length)
             break;
     }
 }
-
 
 void handleDeviceInquiry(byte* data, word length)
 {
@@ -610,7 +589,6 @@ void handleDeviceInquiry(byte* data, word length)
     }
 }
 
-
 void handleHeader(byte* data, word length)
 {
     if (memcmp(&data[8], "MFU ", 4) == 0)
@@ -644,7 +622,6 @@ void handleHeader(byte* data, word length)
     }
     else sendNAK(0);
 }
-
 
 void handleDataPacket(byte* data, word length)
 {
@@ -706,7 +683,6 @@ void handleDataPacket(byte* data, word length)
     
 }
 
-
 void handleEOF(byte* data, word length)
 {
     if (gChunk.id + 1 == gFirmware.numChunks)
@@ -763,7 +739,6 @@ void handleEOF(byte* data, word length)
     //sendACK(0);
 }
 
-
 #if ENABLE_WRITE
 void writeChunk()
 {
@@ -795,7 +770,6 @@ void writeChunk()
 }
 #endif
 
-
 // -----------------------------------------------------------------------------
 // LCD Interface
 
@@ -808,13 +782,11 @@ void LCDPrint(byte line, byte col, char* text)
     for (i=0;i<length;i++) sendByteOnUSART0(text[i]);
 }
 
-
 void LCDClear()
 {
     sendByteOnUSART0(0xFE);
     sendByteOnUSART0(0x01);
 }
-
 
 void Cursor(byte line, byte col)
 {
@@ -827,7 +799,6 @@ void Cursor(byte line, byte col)
 }
 
 #endif
-
 
 // -----------------------------------------------------------------------------
 // Main Entry Point
@@ -926,4 +897,3 @@ int main(void)
     
     return 0;
 }
-
